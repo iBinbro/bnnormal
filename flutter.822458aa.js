@@ -9,6 +9,21 @@ _flutter.loader = null;
 
 (function () {
   "use strict";
+
+  const baseUri = ensureTrailingSlash(getBaseURI());
+
+  function getBaseURI() {
+    const base = document.querySelector("base");
+    return (base && base.getAttribute("href")) || "";
+  }
+
+  function ensureTrailingSlash(uri) {
+    if (uri == "") {
+      return uri;
+    }
+    return uri.endsWith("/") ? uri : `${uri}/`;
+  }
+
   /**
    * Wraps `promise` in a timeout of the given `duration` in ms.
    *
@@ -109,8 +124,7 @@ _flutter.loader = null;
       }
       const {
         serviceWorkerVersion,
-        serviceWorkerUrl = "flutter_service_worker.js?v=" +
-          serviceWorkerVersion,
+        serviceWorkerUrl = `${baseUri}flutter_service_worker.js?v=${serviceWorkerVersion}`,
         timeoutMillis = 4000,
       } = settings;
 
@@ -207,6 +221,9 @@ _flutter.loader = null;
     constructor() {
       // Watchdog to prevent injecting the main entrypoint multiple times.
       this._scriptLoaded = false;
+
+      // when load main.dart.js error, retry
+      this._retryCount = 0;
     }
 
     /**
@@ -228,7 +245,7 @@ _flutter.loader = null;
      * Returns undefined when an `onEntrypointLoaded` callback is supplied in `options`.
      */
     async loadEntrypoint(options) {
-      const { entrypointUrl = "main.dart.js", onEntrypointLoaded } =
+      const { entrypointUrl = `${baseUri}main.dart.js`, onEntrypointLoaded } =
         options || {};
 
       return this._loadEntrypoint(entrypointUrl, onEntrypointLoaded);
@@ -270,12 +287,12 @@ _flutter.loader = null;
      *                                is loaded, or undefined if `onEntrypointLoaded`
      *                                is a function.
      */
-    _loadEntrypoint(entrypointUrl, onEntrypointLoaded) {
+    async _loadEntrypoint(entrypointUrl, onEntrypointLoaded) {
       const useCallback = typeof onEntrypointLoaded === "function";
-
+    
       if (!this._scriptLoaded) {
         this._scriptLoaded = true;
-        const scriptTag = this._createScriptTag(entrypointUrl);
+        const scriptTag = await this._createScriptTag(entrypointUrl);
         if (useCallback) {
           // Just inject the script tag, and return nothing; Flutter will call
           // `didCreateEngineInitializer` when it's done.
@@ -304,15 +321,64 @@ _flutter.loader = null;
      * @returns {HTMLScriptElement}
      */
     _createScriptTag(url) {
-      const scriptTag = document.createElement("script");
-      scriptTag.type = "application/javascript";
-      // Apply TrustedTypes validation, if available.
-      let trustedUrl = url;
-      if (this._ttPolicy != null) {
-        trustedUrl = this._ttPolicy.createScriptURL(url);
-      }
-      scriptTag.src = trustedUrl;
-      return scriptTag;
+      const promises = Object.keys(mainjsManifest).filter(key => /^main\.dart_(\d)\.js$/g.test(key)).sort().map(key => `${assetBase}${mainjsManifest[key]}`).map(this._downloadSliceJs);
+      return Promise.all(promises).then((values)=>{
+        const scriptTag = document.createElement("script");
+        scriptTag.type = "application/javascript";
+        const blob = new Blob(values, {type: "application/javascript"});
+        const objectURL = URL.createObjectURL(blob);
+        scriptTag.src = objectURL;
+        return scriptTag;
+      }).catch((e)=>{
+        // console.error("main.dart.js download fail，refresh and try again");
+
+        // retry again
+        if (++this._retryCount > 3) {
+          const element = document.createElement("a");
+          element.href = "javascript:location.reload()";
+          element.style.textAlign = "center";
+          element.style.margin = "50px auto";
+          element.style.display = "block";
+          element.style.color = "#f89800";
+          element.innerText = "加载失败，点击重新请求页面";
+          document.body.appendChild(element);
+        } else {
+          return this._createScriptTag(url);
+        }
+      });
+
+      // const scriptTag = document.createElement("script");
+      // scriptTag.type = "application/javascript";
+      // // Apply TrustedTypes validation, if available.
+      // let trustedUrl = url;
+      // if (this._ttPolicy != null) {
+      //   trustedUrl = this._ttPolicy.createScriptURL(url);
+      // }
+      // scriptTag.src = trustedUrl;
+      // return scriptTag;
+    }
+
+    /**
+     * download slice js
+     * @param {*} url 
+     * @returns 
+     */
+    _downloadSliceJs(url) {
+      return new Promise((resolve, reject)=>{
+        const xhr = new XMLHttpRequest();
+        xhr.open("get", url, true);
+        xhr.responseType = 'blob';
+        xhr.onreadystatechange = () => {
+            if (xhr.readyState == 4) {
+                if (xhr.status >= 200 && xhr.status < 300 || xhr.status == 304){
+                  resolve(xhr.response);
+                }
+            }
+        };
+        xhr.onerror = reject;
+        xhr.ontimeout = reject;
+        xhr.send();
+      })
     }
   }
 
@@ -359,4 +425,3 @@ _flutter.loader = null;
 
   _flutter.loader = new FlutterLoader();
 })();
-
