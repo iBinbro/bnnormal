@@ -32,7 +32,7 @@
   <script src="https://ibinbro.github.io/bnsplit/flutter_web_optimizer.695e9336.js" defer=""></script>
 <script>
     // The value below is injected by flutter build, do not touch.
-    var serviceWorkerVersion = '41038091';
+    var serviceWorkerVersion = '2003944324';
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="https://ibinbro.github.io/bnsplit/flutter.822458aa.js" defer=""></script>
@@ -50,6 +50,19 @@
       _flutter.loader.loadEntrypoint({
         serviceWorker: {
           serviceWorkerVersion: serviceWorkerVersion,
+        },
+        onEntrypointLoaded: function(engineInitializer) {
+          engineInitializer.initializeEngine().then(function(appRunner) {
+
+            loading.remove();
+
+            appRunner.runApp();
+          })
+          .then(function(appRunner) {
+            window.setTimeout(function () {
+              loading.remove();
+            }, 200);
+          });
         }
       });
     });
